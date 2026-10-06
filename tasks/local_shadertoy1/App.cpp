@@ -4,6 +4,8 @@
 #include <etna/GlobalContext.hpp>
 #include <etna/PipelineManager.hpp>
 
+#include <array>
+
 
 App::App()
   : resolution{1280, 720}
@@ -74,7 +76,16 @@ App::App()
     resolution = {w, h};
   }
 
-  // TODO: Initialize any additional resources you require here!
+  etna::create_program("toy", {LOCAL_SHADERTOY1_SHADERS_ROOT "toy.comp.spv"});
+  pipeline = etna::get_context().getPipelineManager().createComputePipeline("toy", {});
+
+  resultImage = etna::get_context().createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+    .name = "shadertoy_result",
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
+  });
+  startTime = windowing.getTime();
 }
 
 App::~App()
@@ -116,7 +127,44 @@ void App::drawFrame()
 
     ETNA_CHECK_VK_RESULT(currentCmdBuf.begin(vk::CommandBufferBeginInfo{}));
     {
-      // First of all, we need to "initialize" th "backbuffer", aka the current swapchain
+      // Make the result writable by the compute shader, including after the previous blit.
+      etna::set_state(
+        currentCmdBuf,
+        resultImage.get(),
+        vk::PipelineStageFlagBits2::eComputeShader,
+        vk::AccessFlagBits2::eShaderStorageWrite,
+        vk::ImageLayout::eGeneral,
+        vk::ImageAspectFlagBits::eColor);
+
+      auto shaderInfo = etna::get_shader_program("toy");
+      auto descriptorSet = etna::create_descriptor_set(
+        shaderInfo.getDescriptorLayoutId(0),
+        currentCmdBuf,
+        {etna::Binding{0, resultImage.genBinding({}, vk::ImageLayout::eGeneral)}},
+        BarrierBehavior::eSuppressBarriers);
+      vk::DescriptorSet vkSet = descriptorSet.getVkSet();
+
+      currentCmdBuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.getVkPipeline());
+      currentCmdBuf.bindDescriptorSets(
+        vk::PipelineBindPoint::eCompute, pipeline.getVkPipelineLayout(), 0, 1, &vkSet, 0, nullptr);
+
+      const float time = static_cast<float>(windowing.getTime() - startTime);
+      currentCmdBuf.pushConstants(
+        pipeline.getVkPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, sizeof(time), &time);
+
+      etna::flush_barriers(currentCmdBuf);
+      // Match the 8x8 local size in toy.comp; the shader skips pixels outside the image.
+      currentCmdBuf.dispatch((resolution.x + 7) / 8, (resolution.y + 7) / 8, 1);
+
+      etna::set_state(
+        currentCmdBuf,
+        resultImage.get(),
+        vk::PipelineStageFlagBits2::eTransfer,
+        vk::AccessFlagBits2::eTransferRead,
+        vk::ImageLayout::eTransferSrcOptimal,
+        vk::ImageAspectFlagBits::eColor);
+
+      // Initialize the "backbuffer", aka the current swapchain
       // image, into a state that is appropriate for us working with it. The initial state
       // is considered to be "undefined" (aka "I contain trash memory"), by the way.
       // "Transfer" in vulkanese means "copy or blit".
@@ -139,7 +187,31 @@ void App::drawFrame()
       etna::flush_barriers(currentCmdBuf);
 
 
-      // TODO: Record your commands here!
+      const vk::ImageSubresourceLayers colorLayer{
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .mipLevel = 0,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
+      };
+      const vk::Offset3D imageEnd{
+        static_cast<int32_t>(resolution.x), static_cast<int32_t>(resolution.y), 1};
+      const vk::ImageBlit region{
+        .srcSubresource = colorLayer,
+        .srcOffsets = std::array{vk::Offset3D{0, 0, 0}, imageEnd},
+        .dstSubresource = colorLayer,
+        .dstOffsets = std::array{vk::Offset3D{0, 0, 0}, imageEnd},
+      };
+
+      // Unlike copy, blit converts texels between RGBA and the swapchain's BGRA format.
+      // It also supports scaling; here both images have the same dimensions.
+      currentCmdBuf.blitImage(
+        resultImage.get(),
+        vk::ImageLayout::eTransferSrcOptimal,
+        backbuffer,
+        vk::ImageLayout::eTransferDstOptimal,
+        1,
+        &region,
+        vk::Filter::eNearest);
 
 
       // At the end of "rendering", we are required to change how the pixels of the
