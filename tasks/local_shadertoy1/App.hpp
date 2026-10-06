@@ -28,4 +28,7 @@ private:
 
   std::unique_ptr<etna::Window> vkWindow;
   std::unique_ptr<etna::PerFrameCmdMgr> commandManager;
+  etna::ComputePipeline pipeline;
+  etna::Image resultImage;
+  double startTime = 0.0;
 };
