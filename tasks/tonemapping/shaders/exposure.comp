@@ -1,0 +1,41 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#define METERING_ACCESS
+#include "metering.glsl"
+
+layout(local_size_x = 1) in;
+
+layout(push_constant) uniform Parameters
+{
+    float adaptation;
+} params;
+
+void main()
+{
+    uvec2 size = uvec2(textureSize(hdrImage, 0));
+    uint pixelCount = size.x * size.y;
+    uint rank = pixelCount - pixelCount / 5u;
+    uint cumulative = 0u;
+
+    vec2 range = logRange();
+    float percentile = range.x;
+    for (int bin = 0; bin < HISTOGRAM_BINS; ++bin)
+    {
+        uint count = metering.histogram[bin];
+        if (cumulative + count >= rank)
+        {
+            float fraction = (float(rank - cumulative) - 0.5) / float(count);
+            float position = (float(bin) + fraction) / HISTOGRAM_BINS;
+            percentile = mix(range.x, range.y, position);
+            break;
+        }
+        cumulative += count;
+    }
+
+    // Meter at the 80th percentile to keep small bright highlights from driving the exposure.
+    float target = clamp(log2(0.45) - percentile, -8.0, 8.0);
+    if (params.adaptation < 1.0)
+        target = mix(metering.logExposure, target, params.adaptation);
+    metering.logExposure = target;
+}

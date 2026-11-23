@@ -1,0 +1,48 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#define METERING_ACCESS
+#include "metering.glsl"
+
+layout(local_size_x = METERING_TILE_WIDTH, local_size_y = METERING_TILE_HEIGHT) in;
+
+layout(push_constant) uniform Parameters
+{
+    uint useSharedMemory;
+} params;
+
+shared uint groupHistogram[HISTOGRAM_BINS];
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    bool valid = all(lessThan(pixel, textureSize(hdrImage, 0)));
+    uint bin = 0u;
+    if (valid)
+    {
+        vec2 range = logRange();
+        float value = logLuminance(luminance(texelFetch(hdrImage, pixel, 0).rgb));
+        float position = clamp((value - range.x) / max(range.y - range.x, 0.00001), 0.0, 1.0);
+        bin = min(uint(position * HISTOGRAM_BINS), uint(HISTOGRAM_BINS - 1));
+    }
+
+    if (params.useSharedMemory == 0u)
+    {
+        if (valid)
+            atomicAdd(metering.histogram[bin], 1u);
+        return;
+    }
+
+    // The workgroup has at least one invocation per bin.
+    uint lane = gl_LocalInvocationIndex;
+    if (lane < HISTOGRAM_BINS)
+        groupHistogram[lane] = 0u;
+    barrier();
+
+    if (valid)
+        atomicAdd(groupHistogram[bin], 1u);
+    barrier();
+
+    if (lane < HISTOGRAM_BINS && groupHistogram[lane] != 0u)
+        atomicAdd(metering.histogram[lane], groupHistogram[lane]);
+}
