@@ -46,7 +46,7 @@ private:
   etna::Buffer metering;
 
   float cameraYaw = 0.0f;
-  bool brightLight = true;
+  bool localLightOn = false;
   bool useTonemapping = true;
   bool useSharedMemory = true;
   bool exposureReady = false;

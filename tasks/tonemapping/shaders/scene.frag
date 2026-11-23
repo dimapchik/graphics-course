@@ -6,11 +6,14 @@ layout(push_constant) uniform Parameters
 {
     vec2 resolution;
     float cameraYaw;
-    float illumination;
+    float localLightEnabled;
 } params;
 
 const vec3 sunDirection = normalize(vec3(-0.46, 0.27, -0.85));
 const vec3 sunColor = vec3(1.0, 0.68, 0.36);
+const vec3 localLightPosition = vec3(0.95, 1.15, 1.80);
+const vec3 localLightColor = vec3(0.48, 0.78, 1.0);
+const float localLightRadius = 1.5;
 const vec3 centers[3] = vec3[3](vec3(-1.12, 0.83, 0.0),
                               vec3(0.72, 0.67, 0.5),
                               vec3(1.70, 0.37, -1.05));
@@ -26,7 +29,7 @@ vec3 sky(vec3 ray)
     float towardSun = max(dot(ray, sunDirection), 0.0);
     float glow = 2.0 * pow(towardSun, 24.0);
     float disc = 38.0 * smoothstep(0.9986, 0.9990, towardSun);
-    return (gradient + sunColor * (glow + disc)) * params.illumination;
+    return gradient + sunColor * (glow + disc);
 }
 
 float hitSphere(vec3 origin, vec3 ray, int sphere)
@@ -88,11 +91,18 @@ void main()
         float diffuse = max(dot(normal, sunDirection), 0.0);
         vec3 reflected = reflect(ray, normal);
         float highlight = pow(max(dot(reflected, sunDirection), 0.0), 80.0);
-        color = albedo * (vec3(0.18, 0.24, 0.34) + 4.0 * sunColor * diffuse * visibility)
-            * params.illumination;
+        color = albedo * (vec3(0.18, 0.24, 0.34) + 4.0 * sunColor * diffuse * visibility);
         if (object >= 0)
-            color += 0.24 * sky(reflected) + 12.0 * sunColor * highlight * visibility
-                * params.illumination;
+            color += 0.24 * sky(reflected) + 12.0 * sunColor * highlight * visibility;
+
+        if (params.localLightEnabled > 0.0)
+        {
+            vec3 toLight = localLightPosition - point;
+            float distanceToLight = length(toLight);
+            float falloff = 1.0 - smoothstep(0.0, localLightRadius, distanceToLight);
+            float localDiffuse = max(dot(normal, toLight / distanceToLight), 0.0);
+            color += 10.0 * albedo * localLightColor * falloff * localDiffuse;
+        }
 
         // Blend distant tiles into the horizon.
         color = mix(color, sky(ray), smoothstep(20.0, 80.0, distanceToHit));

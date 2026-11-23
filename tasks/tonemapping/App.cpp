@@ -154,7 +154,7 @@ void App::run()
       (static_cast<float>(is_held_down(kb[KeyboardKey::kRight])) -
        static_cast<float>(is_held_down(kb[KeyboardKey::kLeft])));
     if (kb[KeyboardKey::kL] == ButtonState::Rising)
-      brightLight = !brightLight;
+      localLightOn = !localLightOn;
     if (kb[KeyboardKey::kT] == ButtonState::Rising)
     {
       useTonemapping = !useTonemapping;
@@ -287,7 +287,7 @@ void App::drawFrame(float dt)
         static_cast<float>(resolution.x),
         static_cast<float>(resolution.y),
         cameraYaw,
-        brightLight ? 1.0f : 0.075f,
+        localLightOn ? 1.0f : 0.0f,
       };
       cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, scenePipeline.getVkPipeline());
       cmd.pushConstants(
