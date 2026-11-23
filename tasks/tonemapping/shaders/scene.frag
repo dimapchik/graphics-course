@@ -27,9 +27,14 @@ vec3 sky(vec3 ray)
     float height = sqrt(max(ray.y, 0.0));
     vec3 gradient = mix(vec3(0.50, 0.29, 0.18), vec3(0.10, 0.29, 0.59), height);
     float towardSun = max(dot(ray, sunDirection), 0.0);
-    float glow = 2.0 * pow(towardSun, 24.0);
-    float disc = 38.0 * smoothstep(0.9986, 0.9990, towardSun);
-    return gradient + sunColor * (glow + disc);
+    float glow = 0.85 * pow(towardSun, 24.0);
+    float disc = smoothstep(0.9974, 0.9978, towardSun);
+
+    // Both brightness levels clip to the same white in direct output.
+    vec2 sunOffset = ray.xy - sunDirection.xy;
+    float bands = cos(135.0 * (sunOffset.y + 2.0 * sunOffset.x * sunOffset.x));
+    float radiance = mix(1.2, 8.0, smoothstep(-0.35, 0.65, bands));
+    return gradient + glow * sunColor + disc * radiance * vec3(1.0, 0.86, 0.67);
 }
 
 float hitSphere(vec3 origin, vec3 ray, int sphere)

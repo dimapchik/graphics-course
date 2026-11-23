@@ -131,7 +131,7 @@ void App::recreateSwapchain(glm::uvec2 requested_resolution)
 
 void App::updateTitle()
 {
-  std::string title = useTonemapping ? "Tone mapping: auto exposure" : "Tone mapping: direct";
+  std::string title = useTonemapping ? "Tone mapping on" : "Direct output (clipping)";
   title += useSharedMemory ? " | shared memory" : " | global atomics";
   glfwSetWindowTitle(osWindow->native(), title.c_str());
 }
