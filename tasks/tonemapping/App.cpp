@@ -1,5 +1,6 @@
 #include "App.hpp"
 
+#include <etna/Assert.hpp>
 #include <etna/Etna.hpp>
 #include <etna/GlobalContext.hpp>
 #include <etna/PipelineManager.hpp>
@@ -46,6 +47,16 @@ bool is_srgb(vk::Format format)
     format == vk::Format::eA8B8G8R8SrgbPack32 || format == vk::Format::eR8G8B8Srgb ||
     format == vk::Format::eB8G8R8Srgb;
 }
+
+glm::uvec2 drawable_size(GLFWwindow* window)
+{
+  if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) == GLFW_TRUE)
+    return {};
+
+  glm::ivec2 size{};
+  glfwGetFramebufferSize(window, &size.x, &size.y);
+  return glm::uvec2{size};
+}
 } // namespace
 
 
@@ -65,6 +76,14 @@ App::App()
   });
 
   auto& ctx = etna::get_context();
+  constexpr auto REQUIRED_HDR_FEATURES =
+    vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
+  const auto hdrFeatures =
+    ctx.getPhysicalDevice().getFormatProperties(HDR_FORMAT).optimalTilingFeatures;
+  ETNA_VERIFYF(
+    (hdrFeatures & REQUIRED_HDR_FEATURES) == REQUIRED_HDR_FEATURES,
+    "The device does not support B10G11R11_UFLOAT_PACK32 as a sampled color attachment.");
+
   commandManager = ctx.createPerFrameCmdMgr();
   osWindow = windowing.createWindow(OsWindow::CreateInfo{.resolution = resolution});
   vkWindow = ctx.createWindow(etna::Window::CreateInfo{
@@ -98,7 +117,6 @@ App::App()
     .name = "exposure_and_histogram",
   });
 
-  recreateSwapchain(resolution);
   updateTitle();
 }
 
@@ -120,13 +138,22 @@ void App::recreateSwapchain(glm::uvec2 requested_resolution)
   });
   resolution = {width, height};
 
+  const auto format = vkWindow->getCurrentFormat();
+  const bool unorm = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eR8G8B8A8Unorm ||
+    format == vk::Format::eA8B8G8R8UnormPack32 || format == vk::Format::eR8G8B8Unorm ||
+    format == vk::Format::eB8G8R8Unorm;
+  ETNA_VERIFYF(
+    is_srgb(format) || unorm,
+    "Tone mapping requires an 8-bit RGB swapchain, but Etna selected {}.",
+    vk::to_string(format));
+
   hdrImage = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{width, height, 1},
     .name = "hdr_scene",
     .format = HDR_FORMAT,
     .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
-  tonemapPipeline = fullscreen_pipeline(TONEMAP_PROGRAM, vkWindow->getCurrentFormat());
+  tonemapPipeline = fullscreen_pipeline(TONEMAP_PROGRAM, format);
 }
 
 void App::updateTitle()
@@ -145,6 +172,16 @@ void App::run()
     const auto& kb = osWindow->keyboard;
     if (osWindow->isBeingClosed() || kb[KeyboardKey::kEscape] == ButtonState::Rising)
       break;
+
+    const auto framebufferSize = drawable_size(osWindow->native());
+    if (framebufferSize.x == 0 || framebufferSize.y == 0)
+    {
+      glfwWaitEventsTimeout(0.1);
+      previousTime = windowing.getTime();
+      continue;
+    }
+    if (!hdrImage.get())
+      recreateSwapchain(framebufferSize);
 
     const double now = windowing.getTime();
     const float dt = static_cast<float>(now - previousTime);
@@ -341,7 +378,7 @@ void App::drawFrame(float dt)
 
   if (!nextImage)
   {
-    const auto requestedResolution = osWindow->getResolution();
+    const auto requestedResolution = drawable_size(osWindow->native());
     if (requestedResolution.x != 0 && requestedResolution.y != 0)
       recreateSwapchain(requestedResolution);
   }
